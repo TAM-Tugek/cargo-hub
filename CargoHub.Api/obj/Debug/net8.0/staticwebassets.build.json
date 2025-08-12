@@ -1,0 +1,11 @@
+{
+  "Version": 1,
+  "Hash": "lH4tqbDzRzYm/sjqCZLBM1po/1g3Zn//5biQOGSLom4=",
+  "Source": "CargoHub.Api",
+  "BasePath": "_content/CargoHub.Api",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": []
+}

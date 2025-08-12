@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+**/.vs/
+**/.idea/
+.git
+.gitignore
+Dockerfile*
+*.user
+*.swp
+*.DS_Store
