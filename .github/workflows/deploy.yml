@@ -24,13 +24,15 @@ jobs:
           RABBITMQ_URL=${{ secrets.RABBITMQ_URL }}
           EOF
 
-      - name: Setup SSH key
+     - name: Setup SSH key
         run: |
+          mkdir -p ~/.ssh
           install -m 600 -D /dev/null ~/.ssh/id_rsa
           printf "%s" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "echo ok"
-
+          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa \
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "echo 'SSH connection OK'"
       - name: Ensure deploy dir exists
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "mkdir -p /opt/cargo-hub && chmod 700 /opt/cargo-hub"
