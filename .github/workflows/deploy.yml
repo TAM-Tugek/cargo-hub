@@ -10,42 +10,91 @@ jobs:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: staging
+    concurrency:
+      group: cargo-hub-stg
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
-      - name: Render .env from staging secrets
+      # --- Render .env from staging secrets (masking values in logs) ---
+      - name: Render .env (staging)
         run: |
-          cat > .env <<'EOF'
-          ASPNETCORE_ENVIRONMENT=Staging
+          cat > .env << 'EOF'
+          ASPNETCORE_ENVIRONMENT=${{ secrets.ASPNETCORE_ENVIRONMENT }}
+          API_PORT=${{ secrets.API_PORT }}
           DB_HOST=${{ secrets.DB_HOST }}
+          DB_PORT=${{ secrets.DB_PORT }}
           DB_NAME=${{ secrets.DB_NAME }}
           DB_USER=${{ secrets.DB_USER }}
           DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           RABBITMQ_URL=${{ secrets.RABBITMQ_URL }}
           EOF
+          # Show masked key names only
+          awk 'BEGIN{FS="="}{printf "%-24s = ****\n",$1}' .env
 
+      # --- SSH key setup ---
       - name: Setup SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
-          mkdir -p ~/.ssh
-          install -m 600 -D /dev/null ~/.ssh/id_rsa
-          printf "%s" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          install -m 700 -d ~/.ssh
+          printf "%s" "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts 2>/dev/null || true
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "echo 'SSH connection OK'"
-      - name: Ensure deploy dir exists
-        run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "mkdir -p /opt/cargo-hub && chmod 700 /opt/cargo-hub"
+          printf "Host *\n\tStrictHostKeyChecking no\n" >> ~/.ssh/config
+          ssh -o BatchMode=yes ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "echo SSH OK"
 
-      - name: Copy .env to server
+      # --- Ensure staging dir structure on server ---
+      - name: Ensure /opt/cargo-hub-stg structure
         run: |
-          scp -o StrictHostKeyChecking=no .env ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }}:/opt/cargo-hub/.env
-          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "chmod 600 /opt/cargo-hub/.env"
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "\
+            sudo mkdir -p /opt/cargo-hub-stg/app /opt/cargo-hub-stg/data/postgres /opt/cargo-hub-stg/data/rabbitmq /opt/cargo-hub-stg/logs && \
+            sudo chmod 700 /opt/cargo-hub-stg /opt/cargo-hub-stg/app && \
+            sudo chmod 750 /opt/cargo-hub-stg/data /opt/cargo-hub-stg/data/postgres /opt/cargo-hub-stg/data/rabbitmq /opt/cargo-hub-stg/logs && \
+            sudo touch /opt/cargo-hub-stg/.env && sudo chmod 600 /opt/cargo-hub-stg/.env"
 
-      - name: Restart stack
+      # --- Staging override with port differences ---
+      - name: Create staging override file
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} \
-            "cd /opt/cargo-hub && docker compose -f docker-compose.prod.yml up -d && docker compose ps && docker logs --tail=50 cargo-hub-api-1 || true"
+          cat > docker-compose.stg.yml << 'YML'
+          services:
+            api:
+              ports:
+                - "${API_PORT:-8081}:8080"
+              environment:
+                ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Staging}
+            db:
+              ports:
+                - "${DB_PORT:-5433}:5432"
+            mq:
+              ports:
+                - "5673:5672"
+                - "15673:15672"
+          YML
+
+      # --- Copy files to server ---
+      - name: Copy env and compose files
+        run: |
+          scp .env ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }}:/opt/cargo-hub-stg/.env
+          scp docker-compose.yml ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }}:/opt/cargo-hub-stg/app/docker-compose.yml
+          scp docker-compose.stg.yml ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }}:/opt/cargo-hub-stg/app/docker-compose.stg.yml
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "sudo chmod 600 /opt/cargo-hub-stg/.env"
+
+      # --- Start isolated staging stack ---
+      - name: Compose up (staging)
+        run: |
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "\
+            docker compose -f /opt/cargo-hub-stg/app/docker-compose.yml \
+                            -f /opt/cargo-hub-stg/app/docker-compose.stg.yml \
+                            --env-file /opt/cargo-hub-stg/.env \
+                            -p cargo-hub-stg up -d --remove-orphans && \
+            docker compose -p cargo-hub-stg ps"
+
+      # --- Health check and short logs ---
+      - name: Health check
+        run: |
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "curl -fsS http://localhost:${{ secrets.API_PORT }}/healthz || true"
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "docker ps --format '{{.Names}}\t{{.Ports}}' | grep cargo-hub-stg || true"
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "docker compose -p cargo-hub-stg logs --tail=80 api || true"
 
   deploy-production:
     if: github.event_name == 'workflow_dispatch'
