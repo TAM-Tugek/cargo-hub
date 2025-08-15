@@ -1,0 +1,84 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ "main" ]   # main'e push → staging deploy
+  workflow_dispatch:       # elle tetikleme (prod/staging seçimi için)
+
+jobs:
+  deploy-staging:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render .env from staging secrets
+        run: |
+          cat > .env <<'EOF'
+          ASPNETCORE_ENVIRONMENT=Staging
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          RABBITMQ_URL=${{ secrets.RABBITMQ_URL }}
+          EOF
+
+      - name: Setup SSH key
+        run: |
+          install -m 600 -D /dev/null ~/.ssh/id_rsa
+          printf "%s" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "echo ok"
+
+      - name: Ensure deploy dir exists
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "mkdir -p /opt/cargo-hub && chmod 700 /opt/cargo-hub"
+
+      - name: Copy .env to server
+        run: |
+          scp -o StrictHostKeyChecking=no .env ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }}:/opt/cargo-hub/.env
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "chmod 600 /opt/cargo-hub/.env"
+
+      - name: Restart stack
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} \
+            "cd /opt/cargo-hub && docker compose -f docker-compose.prod.yml up -d && docker compose ps && docker logs --tail=50 cargo-hub-api-1 || true"
+
+  deploy-production:
+    if: github.event_name == 'workflow_dispatch'
+    # Elle tetiklenecek; istersen Required reviewers açabilirsin (Environment ayarından)
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render .env from prod secrets
+        run: |
+          cat > .env <<'EOF'
+          ASPNETCORE_ENVIRONMENT=Production
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          RABBITMQ_URL=${{ secrets.RABBITMQ_URL }}
+          EOF
+
+      - name: Setup SSH key
+        run: |
+          install -m 600 -D /dev/null ~/.ssh/id_rsa
+          printf "%s" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "echo ok"
+      - name: Ensure deploy dir exists
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "mkdir -p /opt/cargo-hub && chmod 700 /opt/cargo-hub"
+      - name: Copy .env to server
+        run: |
+          scp -o StrictHostKeyChecking=no .env ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }}:/opt/cargo-hub/.env
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "chmod 600 /opt/cargo-hub/.env"
+
+      - name: Restart stack
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} \
+            "cd /opt/cargo-hub && docker compose -f docker-compose.prod.yml up -d && docker compose ps && docker logs --tail=50 cargo-hub-api-1 || true"
