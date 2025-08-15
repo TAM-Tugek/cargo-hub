@@ -1,8 +1,17 @@
+using Microsoft.OpenApi.Models;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Swagger UI için servisler
+// Swagger (NET 8 tarzı)
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "Cargo Hub API",
+        Version = "v1"
+    });
+});
 
 var configuration = builder.Configuration;
 
@@ -61,15 +70,15 @@ app.MapGet("/config-check", () =>
 });
 // <<< Config-check endpoint
 
-// Swagger + UI: Development ve Staging'de açık
+// Swagger sadece Dev ve Staging'de
 if (app.Environment.IsDevelopment() || app.Environment.IsStaging())
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
+    app.UseSwagger();      // /swagger/v1/swagger.json
+    app.UseSwaggerUI();    // /swagger/index.html
 }
 
-// HTTP->HTTPS yönlendirmeyi staging/proxy arkasında sorun çıkarmasın diye pas geçiyoruz
-// app.UseHttpsRedirection();
+// HTTPS redirect'ı kapalı tutuyoruz (proxy arkasında sorun olmasın)
+ // app.UseHttpsRedirection();
 
 // Demo endpoint
 var summaries = new[]
