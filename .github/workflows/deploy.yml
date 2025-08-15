@@ -2,12 +2,12 @@ name: Deploy
 
 on:
   push:
-    branches: [ "main" ]   # main'e push → staging deploy
+    branches: [ "master", "main" ]   # main'e push → staging deploy
   workflow_dispatch:       # elle tetikleme (prod/staging seçimi için)
 
 jobs:
   deploy-staging:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: staging
     steps:
