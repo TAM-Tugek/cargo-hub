@@ -95,10 +95,11 @@ jobs:
               volumes:
                 - /opt/cargo-hub-stg/data/postgres:/var/lib/postgresql/data
               healthcheck:
-                test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -h 127.0.0.1"]
+                test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432"]
                 interval: 10s
                 timeout: 5s
-                retries: 10
+                retries: 12
+                start_period: 20s
 
             mq:
               ports:
