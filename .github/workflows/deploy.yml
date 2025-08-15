@@ -58,6 +58,9 @@ jobs:
           cat > docker-compose.stg.yml << 'YML'
           services:
             api:
+              image: ghcr.io/tam-tugek/cargo-hub:latest
+              pull_policy: always
+              build: null
               ports:
                 - "${API_PORT:-8081}:8080"
               environment:
