@@ -28,6 +28,9 @@ jobs:
           DB_USER=${{ secrets.DB_USER }}
           DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           RABBITMQ_URL=${{ secrets.RABBITMQ_URL }}
+          PGUSER=
+          PGDATABASE=
+          PGPASSWORD=
           EOF
           # Show masked key names only
           awk 'BEGIN{FS="="}{printf "%-24s = ****\n",$1}' .env
@@ -126,6 +129,7 @@ jobs:
       # --- Start isolated staging stack ---
       - name: Compose up (staging)
         run: |
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "docker rm -f cargo-hub-stg-api-1 2>/dev/null || true"
           ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "\
             docker compose -f /opt/cargo-hub-stg/app/docker-compose.yml \
                             -f /opt/cargo-hub-stg/app/docker-compose.stg.yml \
@@ -136,7 +140,7 @@ jobs:
       # --- Health check and short logs ---
       - name: Health check
         run: |
-          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "curl -fsS http://localhost:${{ secrets.API_PORT }}/healthz || true"
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "curl -fsS http://localhost:8081/healthz || true"
           ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "docker ps --format '{{.Names}}\t{{.Ports}}' | grep cargo-hub-stg || true"
           ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "docker compose -p cargo-hub-stg logs --tail=80 api || true"
 
