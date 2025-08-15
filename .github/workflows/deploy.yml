@@ -52,6 +52,11 @@ jobs:
             sudo chmod 750 /opt/cargo-hub-stg/data /opt/cargo-hub-stg/data/postgres /opt/cargo-hub-stg/data/rabbitmq /opt/cargo-hub-stg/logs && \
             sudo touch /opt/cargo-hub-stg/.env && sudo chmod 600 /opt/cargo-hub-stg/.env"
 
+      # --- Postgres data dir ownership (prevents init crash/unhealthy) ---
+      - name: Fix Postgres data dir ownership
+        run: |
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "sudo chown -R 999:999 /opt/cargo-hub-stg/data/postgres || true"
+
       # --- Staging override with port differences ---
       - name: Create staging override file
         run: |
@@ -65,13 +70,48 @@ jobs:
                 - "${API_PORT:-8081}:8080"
               environment:
                 ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Staging}
+                # API'nin iç servis isimleriyle bağlanması için env'ler
+                DB_HOST: db
+                DB_PORT: "5432"
+                DB_NAME: ${DB_NAME}
+                DB_USER: ${DB_USER}
+                DB_PASSWORD: ${DB_PASSWORD}
+                # İç ağdan bağlan; secret yoksa guest/guest fallback
+                RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@mq:5672}
+              depends_on:
+                db:
+                  condition: service_healthy
+                mq:
+                  condition: service_healthy
+
             db:
+              # Staging host-port farkı
               ports:
                 - "${DB_PORT:-5433}:5432"
+              environment:
+                POSTGRES_DB: ${DB_NAME}
+                POSTGRES_USER: ${DB_USER}
+                POSTGRES_PASSWORD: ${DB_PASSWORD}
+              volumes:
+                - /opt/cargo-hub-stg/data/postgres:/var/lib/postgresql/data
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -h 127.0.0.1"]
+                interval: 10s
+                timeout: 5s
+                retries: 10
+
             mq:
               ports:
                 - "5673:5672"
                 - "15673:15672"
+              volumes:
+                - /opt/cargo-hub-stg/data/rabbitmq:/var/lib/rabbitmq
+              # guest/guest default; sadece health check ekleyelim
+              healthcheck:
+                test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+                interval: 10s
+                timeout: 5s
+                retries: 10
           YML
 
       # --- Copy files to server ---
