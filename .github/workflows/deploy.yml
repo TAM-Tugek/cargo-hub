@@ -60,87 +60,28 @@ jobs:
         run: |
           ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "sudo chown -R 999:999 /opt/cargo-hub-stg/data/postgres || true"
 
-      # --- Staging override with port differences ---
-      - name: Create staging override file
+      - name: Copy .env to server (/opt/cargo-hub-stg)
         run: |
-          cat > docker-compose.stg.yml << 'YML'
-          services:
-            api:
-              image: ghcr.io/tam-tugek/cargo-hub:latest
-              pull_policy: always
-              build: null
-              ports:
-                - "${API_PORT:-8081}:8080"
-              environment:
-                ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Staging}
-                # API'nin iç servis isimleriyle bağlanması için env'ler
-                DB_HOST: db
-                DB_PORT: "5432"
-                DB_NAME: ${DB_NAME}
-                DB_USER: ${DB_USER}
-                DB_PASSWORD: ${DB_PASSWORD}
-                # İç ağdan bağlan; secret yoksa guest/guest fallback
-                RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@mq:5672}
-              depends_on:
-                db:
-                  condition: service_healthy
-                mq:
-                  condition: service_healthy
+          scp -o StrictHostKeyChecking=no .env ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }}:/opt/cargo-hub-stg/.env
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "chmod 600 /opt/cargo-hub-stg/.env"
 
-            db:
-              # Staging host-port farkı
-              ports:
-                - "${DB_PORT:-5433}:5432"
-              environment:
-                POSTGRES_DB: ${DB_NAME}
-                POSTGRES_USER: ${DB_USER}
-                POSTGRES_PASSWORD: ${DB_PASSWORD}
-              volumes:
-                - /opt/cargo-hub-stg/data/postgres:/var/lib/postgresql/data
-              healthcheck:
-                test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432"]
-                interval: 10s
-                timeout: 5s
-                retries: 12
-                start_period: 20s
-
-            mq:
-              ports:
-                - "5673:5672"
-                - "15673:15672"
-              volumes:
-                - /opt/cargo-hub-stg/data/rabbitmq:/var/lib/rabbitmq
-              # guest/guest default; sadece health check ekleyelim
-              healthcheck:
-                test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
-                interval: 10s
-                timeout: 5s
-                retries: 10
-          YML
-
-      # --- Copy files to server ---
-      - name: Copy env and compose files
-        run: |
-          scp .env ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }}:/opt/cargo-hub-stg/.env
-          scp docker-compose.yml ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }}:/opt/cargo-hub-stg/app/docker-compose.yml
-          scp docker-compose.stg.yml ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }}:/opt/cargo-hub-stg/app/docker-compose.stg.yml
-          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "sudo chmod 600 /opt/cargo-hub-stg/.env"
-
-      # --- Start isolated staging stack ---
       - name: Compose up (staging)
         run: |
-          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "docker rm -f cargo-hub-stg-api-1 2>/dev/null || true"
-          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "\
-            docker compose -f /opt/cargo-hub-stg/app/docker-compose.yml \
-                            -f /opt/cargo-hub-stg/app/docker-compose.stg.yml \
-                            --env-file /opt/cargo-hub-stg/.env \
-                            -p cargo-hub-stg up -d --remove-orphans && \
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "\
+            cd /opt/cargo-hub-stg && \
+            docker compose -p cargo-hub-stg --env-file ./.env -f ./docker-compose.yml up -d --remove-orphans && \
             docker compose -p cargo-hub-stg ps"
 
       # --- Health check and short logs ---
       - name: Health check
         run: |
-          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "curl -fsS http://localhost:8081/healthz || true"
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "bash -lc '
+            # TCP probe first (is the socket open?)
+            (echo > /dev/tcp/localhost/8081) >/dev/null 2>&1 && echo "TCP 8081: OK" || echo "TCP 8081: FAIL"
+            # HTTP probe (accept 200/301/302/404 as OK)
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8081/healthz || true)
+            case "$code" in 200|301|302|404) echo "healthz HTTP $code (OK)";; *) echo "healthz HTTP $code (NOT OK)";; esac
+          '"
           ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "docker ps --format '{{.Names}}\t{{.Ports}}' | grep cargo-hub-stg || true"
           ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "docker compose -p cargo-hub-stg logs --tail=80 api || true"
 
