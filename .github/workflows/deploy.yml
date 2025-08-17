@@ -65,6 +65,15 @@ jobs:
           scp -o StrictHostKeyChecking=no .env ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }}:/opt/cargo-hub-stg/.env
           ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "chmod 600 /opt/cargo-hub-stg/.env"
 
+      # --- Prepare Docker secret for Postgres (staging only) ---
+      - name: Prepare Docker secret (staging db_password)
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "\
+            set -eu
+            sudo mkdir -p /opt/cargo-hub-stg/secrets && sudo chmod 700 /opt/cargo-hub-stg/secrets && \
+            umask 077; printf '%s' '${{ secrets.DB_PASSWORD }}' | sudo tee /opt/cargo-hub-stg/secrets/db_password.txt >/dev/null && \
+            sudo chmod 600 /opt/cargo-hub-stg/secrets/db_password.txt"
+
       - name: Compose up (staging)
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "\
