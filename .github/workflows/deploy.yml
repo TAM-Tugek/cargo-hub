@@ -75,15 +75,24 @@ jobs:
       # --- Health check and short logs ---
       - name: Health check
         run: |
-          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "bash -lc '
-            # TCP probe first (is the socket open?)
-            (echo > /dev/tcp/localhost/8081) >/dev/null 2>&1 && echo "TCP 8081: OK" || echo "TCP 8081: FAIL"
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "bash -lc '
+            # TCP probe (no subshells to avoid parsing issues)
+            if exec 3<>/dev/tcp/localhost/8081; then
+              echo TCP 8081: OK
+              exec 3<&-; exec 3>&-
+            else
+              echo TCP 8081: FAIL
+            fi
+
             # HTTP probe (accept 200/301/302/404 as OK)
-            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8081/healthz || true)
-            case "$code" in 200|301|302|404) echo "healthz HTTP $code (OK)";; *) echo "healthz HTTP $code (NOT OK)";; esac
+            code=\$(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8081/healthz || true)
+            case \"\$code\" in
+              200|301|302|404) echo \"healthz HTTP \$code (OK)\" ;;
+              *) echo \"healthz HTTP \$code (NOT OK)\" ;;
+            esac
           '"
-          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "docker ps --format '{{.Names}}\t{{.Ports}}' | grep cargo-hub-stg || true"
-          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "docker compose -p cargo-hub-stg logs --tail=80 api || true"
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "docker ps --format '{{.Names}}\t{{.Ports}}' | grep cargo-hub-stg || true"
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.SERVER_IP }} "docker compose -p cargo-hub-stg logs --tail=80 api || true"
 
   deploy-production:
     if: github.event_name == 'workflow_dispatch'
