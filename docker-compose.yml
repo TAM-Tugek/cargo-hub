@@ -3,12 +3,13 @@ services:
     image: postgres:16
     environment:
       POSTGRES_USER: ${PGUSER}
-      POSTGRES_PASSWORD: ${PGPASSWORD}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
       POSTGRES_DB: ${PGDATABASE}
     ports:
-      - "5432:5432"
+      - "55432:5432"
     volumes:
       - dbdata:/var/lib/postgresql/data
+      - ./secrets/db_password:/run/secrets/db_password:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${PGUSER} -d ${PGDATABASE}"]
       interval: 10s
@@ -21,6 +22,18 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${MQ_USER}
+    volumes:
+      - mqdata:/var/lib/rabbitmq
+      - ./secrets/mq_password:/run/secrets/mq_password:ro
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - |
+        set -eu
+        export RABBITMQ_DEFAULT_PASS="$(tr -d '\r\n\t ' < /run/secrets/mq_password)"
+        exec /usr/local/bin/docker-entrypoint.sh rabbitmq-server
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
@@ -29,20 +42,72 @@ services:
     restart: unless-stopped
 
   api:
-    build:
-      context: .
-      dockerfile: CargoHub.Api/Dockerfile
+    image: ghcr.io/tam-tugek/cargo-hub:latest
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT}
+
+      MESSAGEBROKER__HOST: mq
+      MESSAGEBROKER__PORT: "5672"
+      MESSAGEBROKER__USERNAME: ${MQ_APP_USER}
+      MESSAGEBROKER__VHOST: ${MQ_VHOST}
+      MESSAGEBROKER__PASSWORD_FILE: /run/secrets/mq_app_password
+
       ConnectionStrings__Default: "Host=db;Database=${PGDATABASE};Username=${PGUSER};Password=${PGPASSWORD}"
     depends_on:
       db:
         condition: service_healthy
       mq:
         condition: service_healthy
-    ports:
-      - "8080:8080"
+    volumes:
+      - ./secrets/mq_app_password:/run/secrets/mq_app_password:ro
     restart: unless-stopped
+    networks:
+      - cargo-hub_default
+
+  pgadmin:
+    image: dpage/pgadmin4:8.11           # arm64 uyumlu sabit bir tag kullan
+    container_name: cargo-hub-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      # E-posta validasyonu ve bazı korumaları gevşet (yerel kullanım için)
+      PGADMIN_CONFIG_CHECK_EMAIL_DELIVERABILITY: "False"
+      PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "False"
+      PGADMIN_CONFIG_WTF_CSRF_CHECK_DEFAULT: "False"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "5050:80"
+    restart: unless-stopped
+
+  stg-api:
+    image: ghcr.io/tam-tugek/cargo-hub:staging
+    environment:
+      ASPNETCORE_ENVIRONMENT: Staging
+      MESSAGEBROKER__HOST: mq
+      MESSAGEBROKER__PORT: "5672"
+      MESSAGEBROKER__USERNAME: ${MQ_APP_USER}
+      MESSAGEBROKER__VHOST: ${MQ_VHOST}
+      MESSAGEBROKER__PASSWORD_FILE: /run/secrets/mq_app_password
+      ConnectionStrings__Default: "Host=db;Database=${PGDATABASE};Username=${PGUSER};Password=${PGPASSWORD}"
+    depends_on:
+      db:
+        condition: service_healthy
+      mq:
+        condition: service_healthy
+    volumes:
+      - ./secrets/mq_app_password:/run/secrets/mq_app_password:ro
+    restart: unless-stopped
+    networks:
+      - cargo-hub-stg_default
 
 volumes:
   dbdata:
+  mqdata:
+
+networks:
+  cargo-hub_default:
+    external: true
+  cargo-hub-stg_default:
+    external: true
