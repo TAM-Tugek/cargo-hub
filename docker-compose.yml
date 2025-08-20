@@ -5,8 +5,6 @@ services:
       POSTGRES_USER: ${PGUSER}
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
       POSTGRES_DB: ${PGDATABASE}
-    ports:
-      - "55432:5432"
     volumes:
       - dbdata:/var/lib/postgresql/data
       - ./secrets/db_password:/run/secrets/db_password:ro
@@ -19,9 +17,6 @@ services:
 
   mq:
     image: rabbitmq:3-management
-    ports:
-      - "5672:5672"
-      - "15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: ${MQ_USER}
     volumes:
@@ -42,9 +37,10 @@ services:
     restart: unless-stopped
 
   api:
-    image: ghcr.io/tam-tugek/cargo-hub:latest
+    image: ghcr.io/tam-tugek/cargo-hub:staging
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT}
+      ENABLE_SWAGGER: ${ENABLE_SWAGGER}
 
       MESSAGEBROKER__HOST: mq
       MESSAGEBROKER__PORT: "5672"
@@ -62,7 +58,9 @@ services:
       - ./secrets/mq_app_password:/run/secrets/mq_app_password:ro
     restart: unless-stopped
     networks:
-      - cargo-hub_default
+      default:
+        aliases:
+          - api
 
   pgadmin:
     image: dpage/pgadmin4:8.11           # arm64 uyumlu sabit bir tag kullan
@@ -77,37 +75,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      - "5050:80"
     restart: unless-stopped
-
-  stg-api:
-    image: ghcr.io/tam-tugek/cargo-hub:staging
-    environment:
-      ASPNETCORE_ENVIRONMENT: Staging
-      MESSAGEBROKER__HOST: mq
-      MESSAGEBROKER__PORT: "5672"
-      MESSAGEBROKER__USERNAME: ${MQ_APP_USER}
-      MESSAGEBROKER__VHOST: ${MQ_VHOST}
-      MESSAGEBROKER__PASSWORD_FILE: /run/secrets/mq_app_password
-      ConnectionStrings__Default: "Host=db;Database=${PGDATABASE};Username=${PGUSER};Password=${PGPASSWORD}"
-    depends_on:
-      db:
-        condition: service_healthy
-      mq:
-        condition: service_healthy
-    volumes:
-      - ./secrets/mq_app_password:/run/secrets/mq_app_password:ro
-    restart: unless-stopped
-    networks:
-      - cargo-hub-stg_default
 
 volumes:
   dbdata:
   mqdata:
-
-networks:
-  cargo-hub_default:
-    external: true
-  cargo-hub-stg_default:
-    external: true
