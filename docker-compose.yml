@@ -7,7 +7,7 @@ services:
       POSTGRES_DB: ${PGDATABASE}
     volumes:
       - dbdata:/var/lib/postgresql/data
-      - ./secrets/db_password:/run/secrets/db_password:ro
+      - ./secrets/db_password.txt:/run/secrets/db_password:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${PGUSER} -d ${PGDATABASE}"]
       interval: 10s
@@ -19,6 +19,7 @@ services:
     image: rabbitmq:3-management
     environment:
       RABBITMQ_DEFAULT_USER: ${MQ_USER}
+      RABBITMQ_DEFAULT_VHOST: ${MQ_VHOST}
     volumes:
       - mqdata:/var/lib/rabbitmq
       - ./secrets/mq_password:/run/secrets/mq_password:ro
@@ -55,7 +56,7 @@ services:
       mq:
         condition: service_healthy
     volumes:
-      - ./secrets/mq_app_password:/run/secrets/mq_app_password:ro
+      - ./secrets/mq_app_password.txt:/run/secrets/mq_app_password:ro
     restart: unless-stopped
     networks:
       default:
